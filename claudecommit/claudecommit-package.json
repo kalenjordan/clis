@@ -1,0 +1,11 @@
+{
+  "name": "claudecommit",
+  "version": "1.0.0",
+  "description": "AI-powered git commit messages using Claude",
+  "bin": {
+    "claudecommit": "./claudecommit"
+  },
+  "keywords": ["git", "commit", "ai", "claude", "cli"],
+  "author": "",
+  "license": "MIT"
+}

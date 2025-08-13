@@ -1,0 +1,275 @@
+#!/usr/bin/env node
+
+const { execSync } = require('child_process');
+const fs = require('fs');
+const readline = require('readline');
+const path = require('path');
+
+// ANSI color codes for terminal output
+const colors = {
+  reset: '\x1b[0m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+  red: '\x1b[31m',
+  gray: '\x1b[90m'
+};
+
+// Function to colorize text
+function colorize(text, color) {
+  return `${colors[color]}${text}${colors.reset}`;
+}
+
+// Function to get git status and changes
+function getGitInfo() {
+  try {
+    const status = execSync('git status --porcelain', { encoding: 'utf8' });
+    const staged = execSync('git diff --cached', { encoding: 'utf8' });
+    const unstaged = execSync('git diff', { encoding: 'utf8' });
+    const diff = staged || unstaged;
+    const recentCommits = execSync('git log --oneline -5', { encoding: 'utf8' });
+    
+    return {
+      status: status.trim(),
+      diff: diff.trim(),
+      recentCommits: recentCommits.trim(),
+      hasChanges: !!status.trim()
+    };
+  } catch (error) {
+    console.error(colorize('Error getting git info: ' + error.message, 'red'));
+    process.exit(1);
+  }
+}
+
+// Function to generate commit message using Claude
+async function generateCommitMessage() {
+  const { status, diff, recentCommits, hasChanges } = getGitInfo();
+  
+  if (!hasChanges) {
+    throw new Error('No changes to commit');
+  }
+
+  // Create a prompt for Claude
+  const prompt = `Based on the following git changes, write a concise and descriptive commit message.
+
+Git Status:
+${status}
+
+Recent commits (for style reference):
+${recentCommits}
+
+Changes (git diff):
+${diff.slice(0, 3000)} ${diff.length > 3000 ? '...(truncated)' : ''}
+
+Write a commit message that:
+1. Follows conventional commit format if the recent commits use it
+2. Is concise but descriptive
+3. Explains the "why" not just the "what"
+4. Uses present tense ("Add" not "Added")
+
+Return ONLY the commit message, nothing else.`;
+
+  // Use Claude CLI to generate the commit message
+  // Create a temporary file to avoid shell escaping issues
+  const tempFile = `/tmp/claude-commit-prompt-${Date.now()}.txt`;
+  fs.writeFileSync(tempFile, prompt);
+  
+  try {
+    console.log(colorize('Generating commit message with Claude...', 'yellow'));
+    
+    const commitMessage = execSync(`cat "${tempFile}" | claude`, { 
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+    }).trim();
+    
+    // Clean up temp file
+    try {
+      fs.unlinkSync(tempFile);
+    } catch {}
+    
+    // Extract just the commit message (remove any extra text Claude might add)
+    const lines = commitMessage.split('\n');
+    let actualMessage = commitMessage;
+    
+    // If Claude added any preamble, try to extract just the commit message
+    if (commitMessage.toLowerCase().includes('here') || commitMessage.toLowerCase().includes('commit message')) {
+      // Look for a line that looks like a commit message (doesn't contain "here" or other preamble words)
+      for (const line of lines) {
+        if (line && !line.toLowerCase().includes('here') && !line.toLowerCase().includes('commit message:') && !line.toLowerCase().includes('based on')) {
+          actualMessage = line;
+          break;
+        }
+      }
+    }
+    
+    return actualMessage;
+  } catch (error) {
+    // Clean up temp file on error
+    try {
+      fs.unlinkSync(tempFile);
+    } catch {}
+    throw new Error(`Failed to generate commit message with Claude: ${error.message}`);
+  }
+}
+
+// Function to prompt user for confirmation
+function promptConfirmation(message) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    // Enable raw mode to capture single keypresses
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    
+    console.log('\n' + colorize('Proposed commit message:', 'cyan'));
+    console.log(colorize('  ' + message, 'green'));
+    console.log('\n' + colorize('Press Enter to commit, Escape or Ctrl-C to cancel', 'yellow'));
+
+    const cleanup = () => {
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      rl.close();
+    };
+
+    // Handle Ctrl-C
+    rl.on('SIGINT', () => {
+      cleanup();
+      console.log('\n' + colorize('Commit cancelled', 'yellow'));
+      process.exit(0);
+    });
+
+    // Listen for keypresses
+    process.stdin.on('keypress', (str, key) => {
+      if (key) {
+        if (key.name === 'return' || key.name === 'enter') {
+          // Enter pressed - confirm
+          cleanup();
+          resolve(true);
+        } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+          // Escape or Ctrl-C pressed - cancel
+          cleanup();
+          console.log('\n' + colorize('Commit cancelled', 'yellow'));
+          process.exit(0);
+        }
+      }
+    });
+
+    // Enable keypress events
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+  });
+}
+
+// Function to show help
+function showHelp() {
+  console.log(colorize('claudecommit - AI-powered git commit messages using Claude', 'cyan'));
+  console.log('\nUsage: claudecommit [options]');
+  console.log('\nOptions:');
+  console.log('  -m, --message <msg>  Use a custom commit message');
+  console.log('  -y, --yes           Skip confirmation prompt');
+  console.log('  --no-add            Only commit staged changes (skip git add)');
+  console.log('  -h, --help          Show this help message');
+  console.log('\nExamples:');
+  console.log('  claudecommit                    # Add all & commit with AI message');
+  console.log('  claudecommit --yes              # Skip confirmation');
+  console.log('  claudecommit --no-add           # Only commit staged changes');
+  console.log('  claudecommit -m "Fix bug"       # Use custom message');
+  console.log('\nInteractive mode:');
+  console.log('  • Press Enter to confirm commit');
+  console.log('  • Press Escape or Ctrl-C to cancel');
+  process.exit(0);
+}
+
+// Main function
+async function main() {
+  try {
+    // Parse command line arguments
+    const args = process.argv.slice(2);
+    
+    // Check for help flag
+    if (args.includes('-h') || args.includes('--help')) {
+      showHelp();
+    }
+    
+    // Check if we're in a git repository
+    try {
+      execSync('git rev-parse --git-dir', { stdio: 'ignore' });
+    } catch {
+      console.error(colorize('Error: Not in a git repository', 'red'));
+      process.exit(1);
+    }
+
+    const skipAdd = args.includes('--no-add');
+    const skipConfirmation = args.includes('--yes') || args.includes('-y');
+    const useMessage = args.includes('-m') || args.includes('--message');
+    let customMessage = null;
+    
+    if (useMessage) {
+      const msgIndex = args.indexOf('-m') !== -1 ? args.indexOf('-m') : args.indexOf('--message');
+      customMessage = args[msgIndex + 1];
+      if (!customMessage) {
+        console.error(colorize('Error: -m flag requires a message', 'red'));
+        process.exit(1);
+      }
+    }
+
+    // Add all changes unless --no-add is specified
+    if (!skipAdd) {
+      console.log(colorize('Adding all changes...', 'gray'));
+      execSync('git add -A', { stdio: 'inherit' });
+    }
+
+    // Check if there are changes to commit
+    const { hasChanges } = getGitInfo();
+    if (!hasChanges) {
+      console.log(colorize('No changes to commit', 'yellow'));
+      process.exit(0);
+    }
+
+    // Get or generate commit message
+    let commitMessage;
+    if (customMessage) {
+      commitMessage = customMessage;
+    } else {
+      try {
+        commitMessage = await generateCommitMessage();
+      } catch (error) {
+        console.error(colorize('Error: ' + error.message, 'red'));
+        process.exit(1);
+      }
+    }
+
+    // Ask for confirmation unless --yes flag is used
+    if (!skipConfirmation) {
+      await promptConfirmation(commitMessage);
+    } else {
+      console.log('\n' + colorize('Commit message:', 'cyan'));
+      console.log(colorize('  ' + commitMessage, 'green'));
+    }
+
+    // Commit the changes
+    console.log(colorize('Committing changes...', 'gray'));
+    const commitCommand = `git commit -m "${commitMessage.replace(/"/g, '\\"')}"`;
+    execSync(commitCommand, { stdio: 'inherit' });
+    
+    console.log(colorize('\n✓ Successfully committed!', 'green'));
+    
+    // Show the commit hash
+    const lastCommit = execSync('git log -1 --oneline', { encoding: 'utf8' });
+    console.log(colorize('Commit: ' + lastCommit.trim(), 'cyan'));
+    
+  } catch (error) {
+    console.error(colorize('Error: ' + error.message, 'red'));
+    process.exit(1);
+  }
+}
+
+// Run the main function
+main();
