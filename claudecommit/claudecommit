@@ -89,8 +89,6 @@ Return ONLY the commit message in this format, nothing else.`;
   fs.writeFileSync(tempFile, prompt);
   
   try {
-    console.log(colorize('Generating commit message with Claude...', 'yellow'));
-    
     const commitMessage = execSync(`cat "${tempFile}" | claude`, { 
       encoding: 'utf8',
       maxBuffer: 1024 * 1024 * 10 // 10MB buffer
@@ -236,7 +234,6 @@ async function main() {
 
     // Add all changes if --add is specified
     if (shouldAdd) {
-      console.log(colorize('Adding all changes...', 'gray'));
       execSync('git add -A', { stdio: 'inherit' });
     }
 
@@ -253,6 +250,7 @@ async function main() {
       commitMessage = customMessage;
     } else {
       try {
+        console.log(colorize('Generating commit message with Claude...', 'yellow'));
         commitMessage = await generateCommitMessage();
       } catch (error) {
         console.error(colorize('Error: ' + error.message, 'red'));
@@ -269,15 +267,10 @@ async function main() {
     }
 
     // Commit the changes
-    console.log(colorize('Committing changes...', 'gray'));
     const commitCommand = `git commit -m "${commitMessage.replace(/"/g, '\\"')}"`;
-    execSync(commitCommand, { stdio: 'inherit' });
+    execSync(commitCommand, { stdio: 'pipe' });
     
     console.log(colorize('\n✓ Successfully committed!', 'green'));
-    
-    // Show the commit hash
-    const lastCommit = execSync('git log -1 --oneline', { encoding: 'utf8' });
-    console.log(colorize('Commit: ' + lastCommit.trim(), 'cyan'));
     
   } catch (error) {
     console.error(colorize('Error: ' + error.message, 'red'));
