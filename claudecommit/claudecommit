@@ -137,9 +137,8 @@ function promptConfirmation(message) {
       process.stdin.setRawMode(true);
     }
     
-    console.log('\n' + colorize('Proposed commit message:', 'cyan'));
-    console.log(colorize('  ' + message, 'green'));
-    console.log('\n' + colorize('Press Enter to commit, Escape or Ctrl-C to cancel', 'yellow'));
+    console.log('\n' + colorize(message, 'green'));
+    console.log('\nPress Enter to commit, Escape or Ctrl-C to cancel');
 
     const cleanup = () => {
       if (process.stdin.isTTY) {
@@ -250,7 +249,7 @@ async function main() {
       commitMessage = customMessage;
     } else {
       try {
-        console.log(colorize('Generating commit message with Claude...', 'yellow'));
+        console.log('Generating commit message with Claude...');
         commitMessage = await generateCommitMessage();
       } catch (error) {
         console.error(colorize('Error: ' + error.message, 'red'));
@@ -262,15 +261,14 @@ async function main() {
     if (!skipConfirmation) {
       await promptConfirmation(commitMessage);
     } else {
-      console.log('\n' + colorize('Commit message:', 'cyan'));
-      console.log(colorize('  ' + commitMessage, 'green'));
+      console.log('\n' + colorize(commitMessage, 'green'));
     }
 
     // Commit the changes
     const commitCommand = `git commit -m "${commitMessage.replace(/"/g, '\\"')}"`;
     execSync(commitCommand, { stdio: 'pipe' });
     
-    console.log(colorize('\n✓ Successfully committed!', 'green'));
+    console.log('✓ Successfully committed!');
     
   } catch (error) {
     console.error(colorize('Error: ' + error.message, 'red'));
