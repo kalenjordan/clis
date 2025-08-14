@@ -188,7 +188,7 @@ function showHelp() {
   console.log('\nOptions:');
   console.log('  -m, --message <msg>  Use a custom commit message');
   console.log('  -y, --yes           Skip confirmation prompt');
-  console.log('  --add               Add all changes before committing');
+  console.log('  -a, --add           Add all changes before committing');
   console.log('  -h, --help          Show this help message');
   console.log('\nExamples:');
   console.log('  claudecommit                    # Commit staged changes with AI message');
@@ -220,7 +220,7 @@ async function main() {
       process.exit(1);
     }
 
-    const shouldAdd = args.includes('--add');
+    const shouldAdd = args.includes('--add') || args.includes('-a');
     const skipConfirmation = args.includes('--yes') || args.includes('-y');
     const useMessage = args.includes('-m') || args.includes('--message');
     let customMessage = null;
