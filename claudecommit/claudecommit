@@ -33,7 +33,8 @@ function getGitInfo() {
       status: status.trim(),
       diff: diff.trim(),
       recentCommits: recentCommits.trim(),
-      hasChanges: !!status.trim()
+      hasChanges: !!status.trim(),
+      hasStagedChanges: !!staged.trim()
     };
   } catch (error) {
     console.error(colorize('Error getting git info: ' + error.message, 'red'));
@@ -43,10 +44,10 @@ function getGitInfo() {
 
 // Function to generate commit message using Claude
 async function generateCommitMessage() {
-  const { status, diff, recentCommits, hasChanges } = getGitInfo();
+  const { status, diff, recentCommits, hasStagedChanges } = getGitInfo();
   
-  if (!hasChanges) {
-    throw new Error('No changes to commit');
+  if (!hasStagedChanges) {
+    throw new Error('No staged changes to commit');
   }
 
   // Create a prompt for Claude
@@ -174,12 +175,12 @@ function showHelp() {
   console.log('\nOptions:');
   console.log('  -m, --message <msg>  Use a custom commit message');
   console.log('  -y, --yes           Skip confirmation prompt');
-  console.log('  --no-add            Only commit staged changes (skip git add)');
+  console.log('  --add               Add all changes before committing');
   console.log('  -h, --help          Show this help message');
   console.log('\nExamples:');
-  console.log('  claudecommit                    # Add all & commit with AI message');
+  console.log('  claudecommit                    # Commit staged changes with AI message');
+  console.log('  claudecommit --add              # Add all & commit with AI message');
   console.log('  claudecommit --yes              # Skip confirmation');
-  console.log('  claudecommit --no-add           # Only commit staged changes');
   console.log('  claudecommit -m "Fix bug"       # Use custom message');
   console.log('\nInteractive mode:');
   console.log('  • Press Enter to confirm commit');
@@ -206,7 +207,7 @@ async function main() {
       process.exit(1);
     }
 
-    const skipAdd = args.includes('--no-add');
+    const shouldAdd = args.includes('--add');
     const skipConfirmation = args.includes('--yes') || args.includes('-y');
     const useMessage = args.includes('-m') || args.includes('--message');
     let customMessage = null;
@@ -220,16 +221,16 @@ async function main() {
       }
     }
 
-    // Add all changes unless --no-add is specified
-    if (!skipAdd) {
+    // Add all changes if --add is specified
+    if (shouldAdd) {
       console.log(colorize('Adding all changes...', 'gray'));
       execSync('git add -A', { stdio: 'inherit' });
     }
 
-    // Check if there are changes to commit
-    const { hasChanges } = getGitInfo();
-    if (!hasChanges) {
-      console.log(colorize('No changes to commit', 'yellow'));
+    // Check if there are staged changes to commit
+    const { hasStagedChanges } = getGitInfo();
+    if (!hasStagedChanges) {
+      console.log(colorize('No staged changes to commit. Use --add to stage all changes.', 'yellow'));
       process.exit(0);
     }
 
