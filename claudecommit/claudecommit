@@ -62,13 +62,26 @@ ${recentCommits}
 Changes (git diff):
 ${diff.slice(0, 3000)} ${diff.length > 3000 ? '...(truncated)' : ''}
 
-Write a commit message that:
-1. Follows conventional commit format if the recent commits use it
-2. Is concise but descriptive
-3. Explains the "why" not just the "what"
-4. Uses present tense ("Add" not "Added")
+Write a commit message with the following format:
+1. A concise top-level summary line (50-72 characters)
+2. A blank line
+3. Details as bullet points (start each with "- ")
 
-Return ONLY the commit message, nothing else.`;
+Requirements:
+- Follow conventional commit format if the recent commits use it
+- Top line should be concise but descriptive
+- Bullet points should explain the "why" and key changes
+- Use present tense ("Add" not "Added")
+- Each bullet point should be a complete thought
+
+Example format:
+Refactor authentication module for better security
+
+- Migrate from MD5 to bcrypt for password hashing
+- Add rate limiting to prevent brute force attacks
+- Update session tokens to use JWT standard
+
+Return ONLY the commit message in this format, nothing else.`;
 
   // Use Claude CLI to generate the commit message
   // Create a temporary file to avoid shell escaping issues
