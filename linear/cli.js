@@ -20,9 +20,9 @@ const colors = {
 
 // Format priority
 function formatPriority(priority) {
-  if (!priority) return colors.gray + 'None' + colors.reset;
+  if (priority === null || priority === undefined) return colors.gray + '⚪ None' + colors.reset;
 
-  const priorityColors = {
+  const priorityMap = {
     0: colors.gray + '⚪ None',
     1: colors.red + '🔴 Urgent',
     2: colors.yellow + '🟡 High',
@@ -30,7 +30,7 @@ function formatPriority(priority) {
     4: colors.cyan + '⚪ Low'
   };
 
-  return (priorityColors[priority.value] || colors.gray + 'Unknown') + colors.reset;
+  return (priorityMap[priority] || colors.gray + '⚪ Unknown') + colors.reset;
 }
 
 // Format status
@@ -50,78 +50,79 @@ function formatStatus(status) {
   return color + status + colors.reset;
 }
 
-// Format date
-function formatDate(dateString) {
+// Format date/time with relative formatting
+function formatRelativeTime(dateString) {
   if (!dateString) return colors.gray + 'N/A' + colors.reset;
 
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffDays === 0) {
-    return colors.green + 'Today' + colors.reset;
-  } else if (diffDays === 1) {
-    return colors.green + 'Yesterday' + colors.reset;
+  if (diffMins < 1) {
+    return colors.green + 'Just now' + colors.reset;
+  } else if (diffMins < 60) {
+    return colors.green + `${diffMins} min${diffMins > 1 ? 's' : ''} ago` + colors.reset;
+  } else if (diffHours < 24) {
+    return colors.cyan + `${diffHours} hour${diffHours > 1 ? 's' : ''} ago` + colors.reset;
   } else if (diffDays < 7) {
-    return colors.cyan + `${diffDays} days ago` + colors.reset;
-  } else if (diffDays < 30) {
-    const weeks = Math.floor(diffDays / 7);
-    return colors.blue + `${weeks} week${weeks > 1 ? 's' : ''} ago` + colors.reset;
+    return colors.blue + `${diffDays} day${diffDays > 1 ? 's' : ''} ago` + colors.reset;
   } else {
     return colors.gray + date.toLocaleDateString() + colors.reset;
   }
 }
 
-// Display issues in table format
-function displayTable(issues) {
+// Display focused issues
+function displayFocusedIssues(issues) {
   if (issues.length === 0) {
-    console.log(colors.yellow + '\nNo issues found matching your criteria.' + colors.reset);
+    console.log(colors.green + '\n✨ All caught up! No high-priority issues need your attention right now.' + colors.reset);
     return;
   }
 
-  console.log(`\n${colors.bright}Found ${issues.length} issue${issues.length !== 1 ? 's' : ''}:${colors.reset}\n`);
+  console.log(`\n${colors.bright}${colors.cyan}📋 Focus on these issues:${colors.reset}\n`);
 
   issues.forEach((issue, index) => {
-    // Issue header
-    console.log(`${colors.bright}${index + 1}. [${issue.identifier}] ${issue.title}${colors.reset}`);
-
-    // Issue details
-    console.log(`   ${colors.gray}Status:${colors.reset} ${formatStatus(issue.status)}`);
+    let assignmentIndicator = '';
+    if (issue.isAssignedToMe) {
+      assignmentIndicator = ` ${colors.green}[YOURS]${colors.reset}`;
+    } else if (!issue.assignee) {
+      assignmentIndicator = ` ${colors.yellow}[UNASSIGNED]${colors.reset}`;
+    } else {
+      assignmentIndicator = ` ${colors.dim}[${issue.assignee}]${colors.reset}`;
+    }
+    
+    console.log(`${colors.bright}${index + 1}. [${issue.identifier}] ${issue.title}${colors.reset}${assignmentIndicator}`);
     console.log(`   ${colors.gray}Priority:${colors.reset} ${formatPriority(issue.priority)}`);
-
-    if (issue.assignee) {
-      console.log(`   ${colors.gray}Assignee:${colors.reset} ${issue.assignee}`);
+    console.log(`   ${colors.gray}Status:${colors.reset} ${formatStatus(issue.status)}`);
+    
+    if (issue.lastCommentTime) {
+      console.log(`   ${colors.gray}Last activity:${colors.reset} ${formatRelativeTime(issue.lastCommentTime)}`);
+    }
+    
+    if (issue.team) {
+      console.log(`   ${colors.gray}Team:${colors.reset} ${issue.team}`);
     }
 
     if (issue.labels && issue.labels.length > 0) {
       console.log(`   ${colors.gray}Labels:${colors.reset} ${colors.magenta}${issue.labels.join(', ')}${colors.reset}`);
     }
 
-    if (issue.team) {
-      console.log(`   ${colors.gray}Team:${colors.reset} ${issue.team}`);
-    }
+    console.log(`   ${colors.gray}URL:${colors.reset} ${colors.blue}${issue.url}${colors.reset}`);
 
-    console.log(`   ${colors.gray}Created:${colors.reset} ${formatDate(issue.createdAt)}`);
-    console.log(`   ${colors.gray}Updated:${colors.reset} ${formatDate(issue.updatedAt)}`);
-
-    if (issue.url) {
-      console.log(`   ${colors.gray}URL:${colors.reset} ${colors.blue}${issue.url}${colors.reset}`);
-    }
-
-    // Description preview (first 100 chars)
     if (issue.description) {
       const preview = issue.description.replace(/\n/g, ' ').substring(0, 100);
       const ellipsis = issue.description.length > 100 ? '...' : '';
       console.log(`   ${colors.gray}Description:${colors.reset} ${colors.dim}${preview}${ellipsis}${colors.reset}`);
     }
 
-    console.log(); // Empty line between issues
+    console.log();
   });
 }
 
-// Main function to fetch Linear tickets
-async function fetchLinearTickets(options) {
+// Main function to fetch priority Linear tickets
+async function fetchPriorityTickets(options) {
   // Check for API key
   const apiKey = process.env.LINEAR_API_KEY;
   if (!apiKey) {
@@ -135,96 +136,101 @@ async function fetchLinearTickets(options) {
     // Initialize Linear client
     const linearClient = new LinearClient({ apiKey });
 
-    console.log(`${colors.cyan}Fetching Linear tickets...${colors.reset}`);
+    console.log(`${colors.cyan}Checking priority issues...${colors.reset}`);
 
-    let issues;
+    // Get the current viewer (authenticated user) for comment filtering
+    const viewer = await linearClient.viewer;
+    const userInfo = await viewer;
+    
+    // Fetch ALL issues (assigned and unassigned)
+    // Fetch extra to account for filtering
+    const issuesResult = await linearClient.issues({
+      first: options.limit * 10, // Fetch extra to account for filtered ones
+      filter: {
+        state: {
+          type: { nin: ["completed", "canceled"] } // Exclude completed/canceled
+        }
+      }
+    });
+    
+    // Process issues and check for recent comments
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const processedIssues = [];
 
-    // Determine which query to use
-    if (options.myIssues) {
-      // Fetch issues assigned to the current user
-      const result = await linearClient.viewer.assignedIssues({
-        first: options.limit,
-        includeArchived: options.includeArchived,
-        orderBy: LinearClient.PaginationOrderBy.UpdatedAt
-      });
-      issues = result.nodes;
-    } else {
-      // Build filter object for general issue query
-      const filter = {
-        first: options.limit,
-        includeArchived: options.includeArchived,
-        orderBy: LinearClient.PaginationOrderBy.UpdatedAt
-      };
+    for (const issue of issuesResult.nodes) {
+      // Stop if we have enough issues
+      if (processedIssues.length >= options.limit) break;
 
-      // Add filters if specified
-      if (options.team) {
-        filter.filter = { ...filter.filter, team: { name: { eq: options.team } } };
-      }
-      if (options.assignee) {
-        filter.filter = { ...filter.filter, assignee: { name: { eq: options.assignee } } };
-      }
-      if (options.state) {
-        filter.filter = { ...filter.filter, state: { name: { eq: options.state } } };
-      }
-      if (options.label) {
-        filter.filter = { ...filter.filter, labels: { name: { eq: options.label } } };
-      }
-      if (options.project) {
-        filter.filter = { ...filter.filter, project: { name: { eq: options.project } } };
-      }
-      if (options.createdAfter) {
-        filter.filter = { ...filter.filter, createdAt: { gte: options.createdAfter } };
-      }
-      if (options.updatedAfter) {
-        filter.filter = { ...filter.filter, updatedAt: { gte: options.updatedAfter } };
-      }
-
-      // Fetch issues with filters
-      const result = await linearClient.issues(filter);
-      issues = result.nodes;
-    }
-
-    // Process and format issues
-    const formattedIssues = await Promise.all(issues.map(async (issue) => {
-      const [assignee, state, team, labels] = await Promise.all([
+      // Get issue details
+      const [assignee, state, team, labels, comments] = await Promise.all([
         issue.assignee,
         issue.state,
         issue.team,
-        issue.labels()
+        issue.labels(),
+        issue.comments({
+          first: 10 // Check last 10 comments
+        })
       ]);
 
-      return {
+      // Check if user commented recently
+      let hasRecentComment = false;
+      let lastCommentTime = null;
+
+      for (const comment of comments.nodes) {
+        const commentUser = await comment.user;
+        const commentTime = new Date(comment.createdAt);
+        
+        if (!lastCommentTime || commentTime > lastCommentTime) {
+          lastCommentTime = commentTime;
+        }
+
+        if (commentUser?.id === userInfo.id && commentTime > twoHoursAgo) {
+          hasRecentComment = true;
+          break;
+        }
+      }
+
+      // Skip if user has commented recently
+      if (hasRecentComment) continue;
+
+      // Add to processed issues
+      processedIssues.push({
         id: issue.id,
         identifier: issue.identifier,
         title: issue.title,
         description: issue.description,
-        priority: issue.priority ? { value: issue.priority, name: issue.priorityLabel } : null,
+        priority: issue.priority,
         status: state?.name,
         assignee: assignee?.name,
+        isAssignedToMe: assignee?.id === userInfo.id,
         team: team?.name,
         labels: labels?.nodes.map(l => l.name) || [],
-        createdAt: issue.createdAt,
-        updatedAt: issue.updatedAt,
         url: issue.url,
-        gitBranchName: issue.branchName
-      };
-    }));
-
-    // Apply text search if query is specified
-    let finalIssues = formattedIssues;
-    if (options.query) {
-      const query = options.query.toLowerCase();
-      finalIssues = formattedIssues.filter(issue =>
-        issue.title?.toLowerCase().includes(query) ||
-        issue.description?.toLowerCase().includes(query)
-      );
+        lastCommentTime: lastCommentTime?.toISOString()
+      });
     }
+
+    // Sort by priority (lower number = higher priority, null = lowest)
+    // Also prioritize issues assigned to the user
+    processedIssues.sort((a, b) => {
+      // First, prioritize assigned to me
+      if (a.isAssignedToMe && !b.isAssignedToMe) return -1;
+      if (!a.isAssignedToMe && b.isAssignedToMe) return 1;
+      
+      // Then sort by priority
+      if (a.priority === null) return 1;
+      if (b.priority === null) return -1;
+      return a.priority - b.priority;
+    });
+
+    // Take the requested number of issues
+    const focusedIssues = processedIssues.slice(0, options.limit);
 
     // Output in requested format
     if (options.format === 'json') {
-      console.log(JSON.stringify(finalIssues, null, 2));
+      console.log(JSON.stringify(focusedIssues, null, 2));
     } else {
-      displayTable(finalIssues);
+      displayFocusedIssues(focusedIssues);
     }
 
   } catch (error) {
@@ -244,24 +250,18 @@ const program = new Command();
 
 program
   .name('linear')
-  .description('CLI tool for fetching and managing Linear tickets')
+  .description('CLI tool for fetching your highest priority Linear tickets')
   .version('1.0.0');
 
 program
   .option('-f, --format <format>', 'output format: table or json', 'table')
-  .option('-l, --limit <number>', 'maximum number of issues to fetch', parseInt, 50)
-  .option('-m, --my-issues', 'fetch only issues assigned to you')
-  .option('--include-archived', 'include archived issues')
-  .option('-t, --team <name>', 'filter by team name or ID')
-  .option('-a, --assignee <name>', 'filter by assignee name or ID')
-  .option('-s, --state <state>', 'filter by state (e.g., "In Progress", "Todo", "Done")')
-  .option('--label <label>', 'filter by label name or ID')
-  .option('-p, --project <name>', 'filter by project name or ID')
-  .option('-q, --query <text>', 'search for text in title or description')
-  .option('--created-after <date>', 'filter issues created after this date (ISO format or duration like "-P7D")')
-  .option('--updated-after <date>', 'filter issues updated after this date (ISO format or duration like "-P7D")')
+  .option('-l, --limit <number>', 'maximum number of priority issues to show', parseInt, 2)
   .helpOption('-h, --help', 'display help for command')
   .addHelpText('after', `
+${colors.cyan}Description:${colors.reset}
+  This tool helps you focus by showing your highest priority Linear issues
+  that you haven't commented on in the last 2 hours.
+
 ${colors.cyan}Environment Variables:${colors.reset}
   ${colors.green}LINEAR_API_KEY${colors.reset}          Your Linear API key (required)
 
@@ -271,23 +271,20 @@ ${colors.cyan}Environment Variables:${colors.reset}
   3. Add it to your .env file: LINEAR_API_KEY=your_key_here
 
 ${colors.cyan}Examples:${colors.reset}
-  ${colors.gray}# Fetch your assigned issues${colors.reset}
-  $ linear --my-issues
+  ${colors.gray}# Show your top 2 priority issues (default)${colors.reset}
+  $ linear
 
-  ${colors.gray}# Fetch issues from a specific team in JSON format${colors.reset}
-  $ linear --team "Engineering" --format json
+  ${colors.gray}# Show top 5 priority issues${colors.reset}
+  $ linear --limit 5
 
-  ${colors.gray}# Search for issues containing "bug" updated in the last 7 days${colors.reset}
-  $ linear --query "bug" --updated-after "-P7D"
-
-  ${colors.gray}# Fetch issues in a specific state with a limit${colors.reset}
-  $ linear --state "In Progress" --limit 20`);
+  ${colors.gray}# Get priority issues in JSON format${colors.reset}
+  $ linear --format json`);
 
 // Parse arguments and run
 program.parse(process.argv);
 const options = program.opts();
 
 // Run the main function
-fetchLinearTickets(options);
+fetchPriorityTickets(options);
 
-module.exports = { fetchLinearTickets };
+module.exports = { fetchPriorityTickets };
