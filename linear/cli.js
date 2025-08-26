@@ -116,7 +116,7 @@ function displayFocusedIssues(issues) {
     if (issue.isAssignedToMe) {
       assignmentIndicator = ` ${colors.green}[YOURS]${colors.reset}`;
     } else if (!issue.assignee) {
-      assignmentIndicator = ` ${colors.yellow}[UNASSIGNED]${colors.reset}`;
+      assignmentIndicator = ` [UNASSIGNED]`;
     } else {
       assignmentIndicator = ` ${colors.dim}[${issue.assignee}]${colors.reset}`;
     }
@@ -343,7 +343,7 @@ async function fetchPriorityTickets(options) {
     const issues = response.issues.nodes;
 
     // Process issues and check for recent comments
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
     const processedIssues = [];
 
     for (const issue of issues) {
@@ -358,14 +358,14 @@ async function fetchPriorityTickets(options) {
           lastCommentTime = commentTime;
         }
 
-        if (comment.user?.id === userInfo.id && commentTime > twoHoursAgo) {
+        if (comment.user?.id === userInfo.id && commentTime > fourHoursAgo) {
           hasRecentComment = true;
           break;
         }
       }
 
-      // Skip if user has commented recently
-      if (hasRecentComment) continue;
+      // Skip if user has commented recently (unless --include-commented flag is set)
+      if (hasRecentComment && !options.includeCommented) continue;
 
       // Skip if assigned to someone else (but keep unassigned issues)
       if (issue.assignee && issue.assignee.id !== userInfo.id) continue;
@@ -469,11 +469,12 @@ program
   .option('-l, --limit <number>', 'maximum number of priority issues to show', (val) => parseInt(val), 2)
   .option('-t, --team <key>', 'filter by team key (e.g., STCH)')
   .option('-v, --verbose', 'show detailed API request logging')
+  .option('--include-commented', 'include issues you have commented on recently')
   .helpOption('-h, --help', 'display help for command')
   .addHelpText('after', `
 ${colors.cyan}Description:${colors.reset}
   This tool helps you focus by showing your highest priority Linear issues
-  that you haven't commented on in the last 2 hours.
+  that you haven't commented on in the last 4 hours.
 
 ${colors.cyan}Environment Variables:${colors.reset}
   ${colors.green}LINEAR_API_KEY${colors.reset}          Your Linear API key (required)
@@ -500,15 +501,13 @@ ${colors.cyan}Examples:${colors.reset}
   $ linear teams --set-default STCH
 
   ${colors.gray}# Get priority issues in JSON format${colors.reset}
-  $ linear --format json`)
+  $ linear --format json
+
+  ${colors.gray}# Include issues you've commented on recently${colors.reset}
+  $ linear --include-commented`)
   .action(fetchPriorityTickets);
 
 // Parse arguments and run
 program.parse(process.argv);
-
-// If no command was provided, show the default (issues)
-if (!process.argv.slice(2).length) {
-  fetchPriorityTickets(program.opts());
-}
 
 module.exports = { fetchPriorityTickets };
