@@ -367,8 +367,8 @@ async function fetchPriorityTickets(options) {
       // Skip if user has commented recently (unless --include-commented flag is set)
       if (hasRecentComment && !options.includeCommented) continue;
 
-      // Skip if assigned to someone else (but keep unassigned issues)
-      if (issue.assignee && issue.assignee.id !== userInfo.id) continue;
+      // Skip if not assigned to current user (only show issues assigned to me)
+      if (!issue.assignee || issue.assignee.id !== userInfo.id) continue;
 
       // Add to processed issues - all data is already fetched!
       processedIssues.push({
@@ -474,7 +474,7 @@ program
   .addHelpText('after', `
 ${colors.cyan}Description:${colors.reset}
   This tool helps you focus by showing your highest priority Linear issues
-  that you haven't commented on in the last 4 hours.
+  assigned to you that you haven't commented on in the last 4 hours.
 
 ${colors.cyan}Environment Variables:${colors.reset}
   ${colors.green}LINEAR_API_KEY${colors.reset}          Your Linear API key (required)
