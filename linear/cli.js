@@ -367,8 +367,15 @@ async function fetchPriorityTickets(options) {
       // Skip if user has commented recently (unless --include-commented flag is set)
       if (hasRecentComment && !options.includeCommented) continue;
 
-      // Skip if not assigned to current user (only show issues assigned to me)
-      if (!issue.assignee || issue.assignee.id !== userInfo.id) continue;
+      // Skip if not assigned to current user (unless --backlog flag is set)
+      // When backlog is enabled, show unassigned issues and issues assigned to the user
+      if (!options.backlog) {
+        // Default behavior: only show issues assigned to me
+        if (!issue.assignee || issue.assignee.id !== userInfo.id) continue;
+      } else {
+        // Backlog mode: show unassigned OR assigned to me
+        if (issue.assignee && issue.assignee.id !== userInfo.id) continue;
+      }
 
       // Add to processed issues - all data is already fetched!
       processedIssues.push({
@@ -470,11 +477,13 @@ program
   .option('-t, --team <key>', 'filter by team key (e.g., STCH)')
   .option('-v, --verbose', 'show detailed API request logging')
   .option('--include-commented', 'include issues you have commented on recently')
+  .option('-b, --backlog', 'include backlog and unassigned issues')
   .helpOption('-h, --help', 'display help for command')
   .addHelpText('after', `
 ${colors.cyan}Description:${colors.reset}
   This tool helps you focus by showing your highest priority Linear issues
   assigned to you that you haven't commented on in the last 4 hours.
+  Use --backlog to also include unassigned issues from the backlog.
 
 ${colors.cyan}Environment Variables:${colors.reset}
   ${colors.green}LINEAR_API_KEY${colors.reset}          Your Linear API key (required)
@@ -504,7 +513,10 @@ ${colors.cyan}Examples:${colors.reset}
   $ linear --format json
 
   ${colors.gray}# Include issues you've commented on recently${colors.reset}
-  $ linear --include-commented`)
+  $ linear --include-commented
+
+  ${colors.gray}# Include backlog and unassigned issues${colors.reset}
+  $ linear --backlog`)
   .action(fetchPriorityTickets);
 
 // Parse arguments and run
