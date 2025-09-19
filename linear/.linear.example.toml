@@ -1,0 +1,7 @@
+# Linear CLI local configuration
+# This file sets defaults for the Linear CLI when run in this directory or its subdirectories
+
+# Default team to use for commands
+defaultTeam = "ENG"
+
+# You can add other configuration options here as needed

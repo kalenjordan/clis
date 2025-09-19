@@ -5,10 +5,12 @@ const { Command } = require('commander');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const toml = require('toml');
 require('dotenv').config();
 
-// Config file path
+// Config file paths
 const CONFIG_PATH = path.join(os.homedir(), '.linear-cli-config.json');
+const LOCAL_CONFIG_NAME = '.linear.toml';
 
 // ANSI color codes for terminal output
 const colors = {
@@ -24,16 +26,47 @@ const colors = {
   gray: '\x1b[90m'
 };
 
+// Load local config from current directory
+function loadLocalConfig() {
+  let currentDir = process.cwd();
+
+  // Walk up the directory tree looking for .linear.toml
+  while (currentDir !== path.parse(currentDir).root) {
+    const localConfigPath = path.join(currentDir, LOCAL_CONFIG_NAME);
+
+    if (fs.existsSync(localConfigPath)) {
+      try {
+        const tomlContent = fs.readFileSync(localConfigPath, 'utf8');
+        return toml.parse(tomlContent);
+      } catch (error) {
+        console.error(`${colors.yellow}Warning: Could not parse local config file at ${localConfigPath}${colors.reset}`);
+        console.error(`${colors.yellow}${error.message}${colors.reset}`);
+      }
+    }
+
+    currentDir = path.dirname(currentDir);
+  }
+
+  return {};
+}
+
 // Load config
 function loadConfig() {
+  // Load global config
+  let globalConfig = {};
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      globalConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
     }
   } catch (error) {
-    console.error(`${colors.yellow}Warning: Could not load config file${colors.reset}`);
+    console.error(`${colors.yellow}Warning: Could not load global config file${colors.reset}`);
   }
-  return {};
+
+  // Load local config
+  const localConfig = loadLocalConfig();
+
+  // Merge configs with local taking precedence
+  return { ...globalConfig, ...localConfig };
 }
 
 // Save config
