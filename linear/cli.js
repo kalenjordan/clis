@@ -269,6 +269,312 @@ async function setDefaultTeam(teamKey, options) {
   }
 }
 
+// Mark a ticket as done and ready for deployment
+async function markTicketDone(ticketId, options) {
+  const apiKey = process.env.LINEAR_API_KEY;
+  if (!apiKey) {
+    console.error(`${colors.red}Error: LINEAR_API_KEY environment variable is not set.${colors.reset}`);
+    process.exit(1);
+  }
+
+  try {
+    const linearClient = new LinearClient({ apiKey });
+
+    // Load config to get deployment target
+    const config = loadConfig();
+
+    if (!config.deploymentTarget) {
+      console.error(`${colors.red}Error: deploymentTarget not configured${colors.reset}`);
+      console.error(`${colors.yellow}Please set deploymentTarget in your .linear.toml file${colors.reset}`);
+      console.error(`${colors.dim}Example: deploymentTarget = "staging" or deploymentTarget = "production"${colors.reset}`);
+      process.exit(1);
+    }
+
+    const deploymentTarget = config.deploymentTarget.toLowerCase();
+    if (deploymentTarget !== 'staging' && deploymentTarget !== 'production') {
+      console.error(`${colors.red}Error: Invalid deploymentTarget '${config.deploymentTarget}'${colors.reset}`);
+      console.error(`${colors.yellow}deploymentTarget must be either 'staging' or 'production'${colors.reset}`);
+      process.exit(1);
+    }
+
+    console.log(`${colors.cyan}Marking ${ticketId} as done and deploying to ${deploymentTarget}...${colors.reset}`);
+
+    // First, fetch the issue to verify it exists and get current state
+    const issueQuery = `
+      query GetIssue($id: String!) {
+        issue(id: $id) {
+          id
+          identifier
+          title
+          assignee {
+            id
+            name
+          }
+          state {
+            id
+            name
+          }
+          labels {
+            nodes {
+              id
+              name
+            }
+          }
+        }
+      }
+    `;
+
+    if (options.verbose) {
+      console.log(`${colors.dim}Fetching issue ${ticketId}...${colors.reset}`);
+    }
+
+    const issueResponse = await linearClient._request(issueQuery, { id: ticketId });
+
+    if (!issueResponse.issue) {
+      console.error(`${colors.red}Error: Issue ${ticketId} not found${colors.reset}`);
+      process.exit(1);
+    }
+
+    const issue = issueResponse.issue;
+    console.log(`\n${colors.bright}Found issue: ${issue.identifier} - ${issue.title}${colors.reset}`);
+
+    // Find Colby user
+    const usersQuery = `
+      query GetUsers {
+        users {
+          nodes {
+            id
+            name
+            email
+          }
+        }
+      }
+    `;
+
+    if (options.verbose) {
+      console.log(`${colors.dim}Fetching users to find Colby...${colors.reset}`);
+    }
+
+    const usersResponse = await linearClient._request(usersQuery);
+    const colby = usersResponse.users.nodes.find(user =>
+      user.name?.toLowerCase().includes('colby') ||
+      user.email?.toLowerCase().includes('colby')
+    );
+
+    if (!colby) {
+      console.error(`${colors.red}Error: Could not find user 'Colby'${colors.reset}`);
+      process.exit(1);
+    }
+
+    // Find "In Review" state for the issue's team
+    const statesQuery = `
+      query GetStates($teamId: String!) {
+        team(id: $teamId) {
+          states {
+            nodes {
+              id
+              name
+              type
+            }
+          }
+        }
+      }
+    `;
+
+    // Get team ID from issue
+    const teamQuery = `
+      query GetIssueTeam($id: String!) {
+        issue(id: $id) {
+          team {
+            id
+          }
+        }
+      }
+    `;
+
+    const teamResponse = await linearClient._request(teamQuery, { id: ticketId });
+    const teamId = teamResponse.issue.team.id;
+
+    if (options.verbose) {
+      console.log(`${colors.dim}Fetching workflow states for team...${colors.reset}`);
+    }
+
+    const statesResponse = await linearClient._request(statesQuery, { teamId });
+    const inReviewState = statesResponse.team.states.nodes.find(state =>
+      state.name.toLowerCase() === 'in review' ||
+      state.name.toLowerCase().includes('review')
+    );
+
+    if (!inReviewState) {
+      console.error(`${colors.red}Error: Could not find 'In Review' state for this team${colors.reset}`);
+      process.exit(1);
+    }
+
+    // Find the appropriate environment label for the issue's team
+    const labelsQuery = `
+      query GetLabels($teamId: String!) {
+        team(id: $teamId) {
+          labels {
+            nodes {
+              id
+              name
+              parent {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    if (options.verbose) {
+      console.log(`${colors.dim}Fetching labels for team to find ${deploymentTarget} environment label...${colors.reset}`);
+    }
+
+    const labelsResponse = await linearClient._request(labelsQuery, { teamId });
+    const teamLabels = labelsResponse.team.labels.nodes;
+    let environmentLabel = teamLabels.find(label =>
+      label.name.toLowerCase() === deploymentTarget ||
+      label.name.toLowerCase() === `${deploymentTarget} environment`
+    );
+
+    let allLabels = teamLabels;
+
+    if (!environmentLabel) {
+      // If not found in team labels, check workspace-wide labels
+      const workspaceLabelsQuery = `
+        query GetWorkspaceLabels {
+          issueLabels {
+            nodes {
+              id
+              name
+              parent {
+                id
+                name
+              }
+            }
+          }
+        }
+      `;
+
+      if (options.verbose) {
+        console.log(`${colors.dim}Checking workspace-wide labels for ${deploymentTarget} environment label...${colors.reset}`);
+      }
+
+      const workspaceLabelsResponse = await linearClient._request(workspaceLabelsQuery);
+      const workspaceLabel = workspaceLabelsResponse.issueLabels.nodes.find(label =>
+        label.name.toLowerCase() === deploymentTarget ||
+        label.name.toLowerCase() === `${deploymentTarget} environment`
+      );
+
+      if (!workspaceLabel) {
+        console.error(`${colors.red}Error: Could not find '${deploymentTarget}' environment label for this team or workspace${colors.reset}`);
+        console.error(`${colors.yellow}The ${deploymentTarget} environment label must exist in your Linear workspace or team${colors.reset}`);
+        process.exit(1);
+      }
+
+      // Use the workspace label if found
+      environmentLabel = workspaceLabel;
+      allLabels = workspaceLabelsResponse.issueLabels.nodes;
+    }
+
+    // Now update the issue with all three changes
+    const updateMutation = `
+      mutation UpdateIssue($id: String!, $assigneeId: String!, $stateId: String!, $labelIds: [String!]!) {
+        issueUpdate(
+          id: $id,
+          input: {
+            assigneeId: $assigneeId,
+            stateId: $stateId,
+            labelIds: $labelIds
+          }
+        ) {
+          success
+          issue {
+            id
+            identifier
+            title
+            assignee {
+              name
+            }
+            state {
+              name
+            }
+            labels {
+              nodes {
+                name
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    // Collect existing label IDs, removing any from the same group as the environment label
+    let existingLabelIds = issue.labels.nodes.map(label => label.id);
+
+    // Get full label info with parent groups (allLabels was set above based on where we found the environment label)
+    const environmentLabelFull = allLabels.find(l => l.id === environmentLabel.id);
+
+    // If environment label has a parent group (environment labels), remove other labels from same group
+    if (environmentLabelFull && environmentLabelFull.parent) {
+      const conflictingLabelNames = allLabels
+        .filter(l => l.parent && l.parent.id === environmentLabelFull.parent.id)
+        .map(l => l.name.toLowerCase());
+
+      existingLabelIds = issue.labels.nodes
+        .filter(label => !conflictingLabelNames.includes(label.name.toLowerCase()))
+        .map(label => label.id);
+    } else {
+      // Just remove any environment labels to avoid duplicates
+      existingLabelIds = issue.labels.nodes
+        .filter(label =>
+          label.name.toLowerCase() !== 'staging' &&
+          label.name.toLowerCase() !== 'production' &&
+          label.name.toLowerCase() !== 'staging environment' &&
+          label.name.toLowerCase() !== 'production environment'
+        )
+        .map(label => label.id);
+    }
+
+    const labelIds = [...existingLabelIds, environmentLabel.id];
+
+    if (options.verbose) {
+      console.log(`${colors.dim}Updating issue...${colors.reset}`);
+      console.log(`${colors.dim}  Assignee: ${colby.name}${colors.reset}`);
+      console.log(`${colors.dim}  State: ${inReviewState.name}${colors.reset}`);
+      console.log(`${colors.dim}  Labels: ${labelIds.length} label(s)${colors.reset}`);
+    }
+
+    const updateResponse = await linearClient._request(updateMutation, {
+      id: ticketId,
+      assigneeId: colby.id,
+      stateId: inReviewState.id,
+      labelIds: labelIds
+    });
+
+    if (updateResponse.issueUpdate.success) {
+      const updatedIssue = updateResponse.issueUpdate.issue;
+      console.log(`\n${colors.green}✓ Successfully marked ${updatedIssue.identifier} as done:${colors.reset}`);
+      console.log(`  ${colors.bright}Assignee:${colors.reset} ${updatedIssue.assignee.name}`);
+      console.log(`  ${colors.bright}Status:${colors.reset} ${updatedIssue.state.name}`);
+      console.log(`  ${colors.bright}Environment:${colors.reset} ${deploymentTarget}`);
+      console.log(`  ${colors.bright}Labels:${colors.reset} ${updatedIssue.labels.nodes.map(l => l.name).join(', ')}`);
+    } else {
+      console.error(`${colors.red}Error: Failed to update issue${colors.reset}`);
+      process.exit(1);
+    }
+
+  } catch (error) {
+    console.error(`${colors.red}Error marking ticket as done:${colors.reset}`, error.message);
+    if (options.verbose && error.errors) {
+      console.error(`${colors.dim}GraphQL errors:${colors.reset}`, JSON.stringify(error.errors, null, 2));
+    }
+    process.exit(1);
+  }
+}
+
 // Main function to fetch priority Linear tickets
 async function fetchPriorityTickets(options) {
   // Check for API key
@@ -503,6 +809,15 @@ program
     }
   });
 
+// Done command - mark a ticket as done and ready for deployment
+program
+  .command('done <ticketId>')
+  .description('Mark a ticket as done (assign to Colby, set to In Review, add deployment environment label)')
+  .option('-v, --verbose', 'show detailed API request logging')
+  .action(async (ticketId, options) => {
+    await markTicketDone(ticketId, options);
+  });
+
 // Default command (issues)
 program
   .option('-f, --format <format>', 'output format: table or json', 'table')
@@ -512,44 +827,6 @@ program
   .option('--include-commented', 'include issues you have commented on recently')
   .option('-b, --backlog', 'include backlog and unassigned issues')
   .helpOption('-h, --help', 'display help for command')
-  .addHelpText('after', `
-${colors.cyan}Description:${colors.reset}
-  This tool helps you focus by showing your highest priority Linear issues
-  assigned to you that you haven't commented on in the last 4 hours.
-  Use --backlog to also include unassigned issues from the backlog.
-
-${colors.cyan}Environment Variables:${colors.reset}
-  ${colors.green}LINEAR_API_KEY${colors.reset}          Your Linear API key (required)
-
-  To get your API key:
-  1. Go to Linear Settings → API → Personal API keys
-  2. Create a new key with read access
-  3. Add it to your .env file: LINEAR_API_KEY=your_key_here
-
-${colors.cyan}Examples:${colors.reset}
-  ${colors.gray}# Show your top 2 priority issues (default)${colors.reset}
-  $ linear
-
-  ${colors.gray}# Show top 5 priority issues${colors.reset}
-  $ linear --limit 5
-
-  ${colors.gray}# Filter by team${colors.reset}
-  $ linear --team STCH
-
-  ${colors.gray}# List all teams${colors.reset}
-  $ linear teams
-
-  ${colors.gray}# Set default team${colors.reset}
-  $ linear teams --set-default STCH
-
-  ${colors.gray}# Get priority issues in JSON format${colors.reset}
-  $ linear --format json
-
-  ${colors.gray}# Include issues you've commented on recently${colors.reset}
-  $ linear --include-commented
-
-  ${colors.gray}# Include backlog and unassigned issues${colors.reset}
-  $ linear --backlog`)
   .action(fetchPriorityTickets);
 
 // Parse arguments and run

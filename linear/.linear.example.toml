@@ -4,4 +4,8 @@
 # Default team to use for commands
 defaultTeam = "ENG"
 
+# Deployment target for the 'done' command
+# Options: "staging" or "production"
+deploymentTarget = "staging"
+
 # You can add other configuration options here as needed
